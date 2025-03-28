@@ -39,6 +39,70 @@ interface PaymentFormData {
   identificationNumber: string
 }
 
+// Variáveis para monitorar requisições do Mercado Pago
+// Usando let para definir fora do componente mas inicializar apenas no cliente
+let originalFetch: typeof fetch | null = null;
+let mercadopagoRequests: AbortController[] = [];
+
+// Função para configurar o monitoramento de fetch - será chamada no useEffect
+const setupFetchMonitoring = () => {
+  // Verificar se já está configurado ou se estamos no servidor
+  if (originalFetch || typeof window === 'undefined') return;
+  
+  // Guardar a referência original do fetch
+  originalFetch = window.fetch;
+  
+  // Substituir o fetch global por nossa versão monitorada
+  window.fetch = function(input: RequestInfo | URL, init?: RequestInit) {
+    // Se a URL contém mercadopago, vamos rastrear a requisição
+    if (typeof input === 'string' && input.includes('mercadopago')) {
+      console.log('🔍 Interceptando requisição para Mercado Pago:', input);
+      
+      // Criar um abort controller para esta requisição
+      const controller = new AbortController();
+      mercadopagoRequests.push(controller);
+      
+      // Adicionar o signal ao init
+      const newInit = {
+        ...init,
+        signal: controller.signal
+      };
+      
+      // Fazer a requisição com o novo init e remover o controller da lista quando terminar
+      // Usar o originalFetch, que sabemos que não é null neste ponto
+      return (originalFetch as typeof fetch)(input, newInit)
+        .then(response => {
+          mercadopagoRequests = mercadopagoRequests.filter(c => c !== controller);
+          return response;
+        })
+        .catch(error => {
+          mercadopagoRequests = mercadopagoRequests.filter(c => c !== controller);
+          throw error;
+        });
+    }
+    
+    // Para outras requisições, comportamento normal
+    return (originalFetch as typeof fetch)(input, init);
+  };
+  
+  console.log("Monitoramento de fetch para Mercado Pago configurado");
+};
+
+// Função para cancelar todas as requisições pendentes do Mercado Pago
+const cancelAllMercadoPagoRequests = () => {
+  if (typeof window === 'undefined' || !mercadopagoRequests.length) return;
+  
+  console.log(`Cancelando ${mercadopagoRequests.length} requisições pendentes do Mercado Pago`);
+  mercadopagoRequests.forEach(controller => {
+    try {
+      controller.abort();
+    } catch (error) {
+      console.error('Erro ao cancelar requisição:', error);
+    }
+  });
+  mercadopagoRequests = [];
+};
+
 // Componente para renderizar partículas de fundo (evitando erro de hidratação)
 const BackgroundParticles = () => {
   const [particles, setParticles] = useState<Array<{
@@ -84,18 +148,101 @@ const BackgroundParticles = () => {
   );
 };
 
+// Função para remover completamente o SDK do Mercado Pago
+const cleanupMercadoPagoResources = () => {
+  console.log("Limpando recursos do Mercado Pago...");
+  
+  // 1. Cancelar todas as requisições abertas do Mercado Pago
+  cancelAllMercadoPagoRequests();
+  
+  // 2. Remover scripts
+  const scripts = document.querySelectorAll('script[src*="mercadopago"]');
+  scripts.forEach(script => {
+    console.log("Removendo script:", (script as HTMLScriptElement).src);
+    script.remove();
+  });
+  
+  // 3. Remover iframes
+  const mpIframes = document.querySelectorAll('iframe[src*="mercadopago"]');
+  mpIframes.forEach(iframe => {
+    console.log("Removendo iframe:", (iframe as HTMLIFrameElement).src || "iframe sem source");
+    iframe.remove();
+  });
+  
+  // 4. Limpar objeto global
+  if (window.MercadoPago) {
+    console.log("Removendo objeto global MercadoPago");
+    delete window.MercadoPago;
+  }
+  
+  // 5. Limpar formulários
+  const mpForms = document.querySelectorAll('form[id*="form-checkout"], form[id*="mercadopago"], form[id*="checkout"]');
+  mpForms.forEach(form => {
+    console.log("Removendo formulário:", form.id || "formulário sem ID");
+    form.remove();
+  });
+  
+  // 6. Limpar elementos ocultos
+  const hiddenSelectors = [
+    '[data-checkout]', 
+    'input[name*="mercadopago"]', 
+    'div[id*="mercadopago"]',
+    'div[class*="mercadopago"]',
+    'div[id*="checkout"]',
+    'div[id*="cardNumber"]',
+    'div[id*="expirationDate"]',
+    'div[id*="securityCode"]',
+    'select[id*="issuer"]',
+    'select[id*="installments"]',
+    'select[id*="identificationType"]'
+  ];
+  
+  hiddenSelectors.forEach(selector => {
+    const elements = document.querySelectorAll(selector);
+    elements.forEach(el => {
+      console.log(`Removendo elemento oculto (${selector}):`, el.id || "elemento sem ID");
+      el.remove();
+    });
+  });
+  
+  // 7. Limpar o localStorage de quaisquer dados do Mercado Pago
+  Object.keys(localStorage).forEach(key => {
+    if (key.includes('mercadopago') || key.includes('checkout')) {
+      console.log("Removendo item do localStorage:", key);
+      localStorage.removeItem(key);
+    }
+  });
+  
+  console.log("Limpeza concluída.");
+}
+
 // Componente para o formulário do Mercado Pago
 const MercadoPagoForm = ({ planData, onPaymentStatusChange }: { 
   planData: any, 
   onPaymentStatusChange: (status: PaymentStatus) => void 
 }) => {
   const formContainerRef = useRef<HTMLDivElement>(null);
+  const mpInitializedRef = useRef<boolean>(false);
   
   useEffect(() => {
     if (!planData) return;
     
+    // Limpar completamente quaisquer recursos anteriores do Mercado Pago
+    cleanupMercadoPagoResources();
+    
+    // Resetar a flag de inicialização
+    mpInitializedRef.current = false;
+    
+    // Pequeno atraso para garantir que tudo seja limpo antes de reinicializar
+    const timeoutId = setTimeout(async () => {
+      await initMercadoPago();
+    }, 300);
+    
     async function initMercadoPago() {
       try {
+        // Verificar novamente se já foi inicializado (pode acontecer se o timeout for chamado várias vezes)
+        if (mpInitializedRef.current) return;
+        
         // Carregar o SDK do Mercado Pago
         await loadMercadoPagoSDK();
         
@@ -105,6 +252,9 @@ const MercadoPagoForm = ({ planData, onPaymentStatusChange }: {
         }
         
         if (!formContainerRef.current) return;
+        
+        // Marcar como inicializado
+        mpInitializedRef.current = true;
         
         // Criar elementos do formulário
         const planForm = document.createElement('form');
@@ -275,14 +425,12 @@ const MercadoPagoForm = ({ planData, onPaymentStatusChange }: {
       }
     }
     
-    initMercadoPago();
-    
     return () => {
-      // Limpar ao desmontar
-      const script = document.querySelector('script[src*="mercadopago"]');
-      if (script) {
-        script.remove();
-      }
+      // Limpar o timeout se o componente for desmontado antes que ele execute
+      clearTimeout(timeoutId);
+      
+      // Limpar recursos do Mercado Pago
+      cleanupMercadoPagoResources();
     };
   }, [planData, onPaymentStatusChange]);
   
@@ -311,6 +459,19 @@ const MercadoPagoForm = ({ planData, onPaymentStatusChange }: {
 export default function CheckoutPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  
+  // Configurar monitoramento de fetch no carregamento do componente
+  useEffect(() => {
+    // Configurar monitoramento apenas no cliente
+    if (typeof window !== 'undefined') {
+      setupFetchMonitoring();
+    }
+    
+    // Limpar monitoramento ao desmontar
+    return () => {
+      cancelAllMercadoPagoRequests();
+    };
+  }, []);
   
   // Estados para armazenar os dados do plano
   const [planData, setPlanData] = useState<{
@@ -599,6 +760,13 @@ export default function CheckoutPage() {
       if (cardForm) {
         console.log("Limpando formulário de cartão")
         // O Mercado Pago não fornece método para destruir o cardForm
+        
+        // Remover scripts e iframes do Mercado Pago
+        const scripts = document.querySelectorAll('script[src*="mercadopago"]');
+        scripts.forEach(script => script.remove());
+        
+        const mpIframes = document.querySelectorAll('iframe[src*="mercadopago"]');
+        mpIframes.forEach(iframe => iframe.remove());
       }
     }
   }, [planData, planDetails, router])
@@ -683,6 +851,20 @@ export default function CheckoutPage() {
   }
 
   const handlePaymentMethodChange = (method: "card" | "pix") => {
+    // Limpar formulário anterior e artefatos do Mercado Pago ao mudar de método
+    if (paymentMethod === "card" && method === "pix") {
+      // Primeiro, cancelar requisições pendentes
+      cancelAllMercadoPagoRequests();
+      
+      // Remover completamente o SDK e todos os recursos do MercadoPago
+      cleanupMercadoPagoResources();
+      
+      // Limpar a instância do cardForm
+      if (cardForm) {
+        setCardForm(null);
+      }
+    }
+    
     setQrCodeGenerated(false)
     setPixData(null)
     setPaymentMethod(method)
@@ -703,7 +885,7 @@ export default function CheckoutPage() {
       <div
         className="absolute inset-0 opacity-5"
         style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Cg fillRule='evenodd'%3E%3Cg fill='%23ffffff' fillOpacity='0.4'%3E%3Cpath opacity='.5' d='M96 95h4v1h-4v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+          backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'100\' height=\'100\' viewBox=\'0 0 100 100\'%3E%3Cg fillRule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fillOpacity=\'0.4\'%3E%3Cpath opacity=\'.5\' d=\'M96 95h4v1h-4v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")'
         }}
       />
 
@@ -822,6 +1004,7 @@ export default function CheckoutPage() {
                 {/* Formulário Mercado Pago - Cartão de Crédito */}
                 {!paymentStatus && paymentMethod === "card" && (
                   <MercadoPagoForm 
+                    key={`card-form-${Date.now()}`}
                     planData={planData} 
                     onPaymentStatusChange={setPaymentStatus} 
                   />
@@ -885,28 +1068,16 @@ export default function CheckoutPage() {
                         {/* QR Code PIX */}
                         <div className="flex flex-col items-center">
                           {pixData?.qr_code_url ? (
-                            <div className="w-48 h-48 mx-auto border rounded-md p-1">
+                            <div className="w-48 h-48 mx-auto border rounded-md p-1 bg-white">
                               <img 
-                                src={pixData.qr_code_url} 
+                                src={`data:image/png;base64,${pixData.qr_code_url}`}
                                 alt="QR Code PIX" 
-                                className="w-full h-full"
+                                className="w-full h-full object-contain"
                               />
                             </div>
                           ) : (
                             <div className="w-48 h-48 mx-auto bg-gray-100 flex items-center justify-center">
-                              <svg
-                                className="h-32 w-32 text-indigo-600"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                xmlns="http://www.w3.org/2000/svg"
-                              >
-                                <path
-                                  d="M9.5 4v16m5-16v16M4 9.5h16M4 14.5h16"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                />
-                              </svg>
+                              <QrCode className="h-32 w-32 text-indigo-600" />
                             </div>
                           )}
                         </div>

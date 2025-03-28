@@ -258,8 +258,8 @@ const MercadoPagoForm = ({ item }: { item: PurchaseItem | null }) => {
                     
                     if (data.status === "Pago") {
                       // Salvar token e dados do usuário
-                      if (data.token) {
-                        localStorage.setItem('access_token', data.token);
+                      if (data.acess_token) {
+                        localStorage.setItem('access_token', data.acess_token);
                       }
                       
                       // Salvar dados do usuário
@@ -281,9 +281,6 @@ const MercadoPagoForm = ({ item }: { item: PurchaseItem | null }) => {
                   .catch(error => {
                     console.error("Erro no pagamento:", error);
                     alert("Erro ao processar pagamento. Tente novamente.");
-                    
-                    // Em caso de erro técnico, redirecionar para falha
-                    window.location.href = "/payment/failure";
                   });
                 },
                 onFetching: (resource: string) => {
@@ -496,8 +493,7 @@ export function CheckoutModal({ isOpen, onClose, item }: CheckoutModalProps) {
       } catch (error) {
         console.error("Erro ao gerar QR Code:", error)
         setErrors({ cpf: "Erro ao gerar QR Code. Verifique o CPF informado." })
-        // Redirecionar para falha se houve erro no processamento
-        window.location.href = "/payment/failure";
+        // Removido o redirecionamento automático para failure
       } finally {
         setIsSubmitting(false)
       }

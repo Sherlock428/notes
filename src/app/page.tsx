@@ -29,19 +29,33 @@ interface ApiModule {
   id: number;
   name: string;
   price: number;
-  subject: string; // Adicionado campo subject
+  subject: string;
+  course: string;
 }
 
 interface ApiSubscription {
   id: number;
   name: string;
   price: number;
+  course: string;
+}
+
+interface ApiCourse {
+  id: number;
+  name: string;
+  modules: ApiModule[];
+  subscribes: ApiSubscription[];
 }
 
 export default function Home() {
   // Estado para armazenar todos os subjects únicos extraídos dos módulos
   const [subjects, setSubjects] = useState<string[]>([])
   const [activeSubject, setActiveSubject] = useState("")
+  
+  // Novo estado para cursos
+  const [courses, setCourses] = useState<ApiCourse[]>([])
+  const [activeCourse, setActiveCourse] = useState<ApiCourse | null>(null)
+  
   const [activeSubscriptionIndex, setActiveSubscriptionIndex] = useState(0)
   const [activeModuleIndex, setActiveModuleIndex] = useState(0)
   const [activeTab, setActiveTab] = useState("subscriptions")
@@ -57,6 +71,17 @@ export default function Home() {
   
   const router = useRouter()
 
+  // Verificar se o usuário está logado e redirecionar para /home se estiver
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('access_token')
+      if (token) {
+        console.log('Usuário já está logado, redirecionando para /home')
+        router.push('/home')
+      }
+    }
+  }, [router])
+
   // Carregar dados do backend
   useEffect(() => {
     const fetchPlans = async () => {
@@ -64,24 +89,49 @@ export default function Home() {
         setIsLoading(true)
         const data = await api.plans.getAll()
         
-        if (data.modules) {
-          setApiModules(data.modules)
+        if (data) {
+          setCourses(data)
           
-          // Extrair subjects únicos dos módulos
-          const uniqueSubjects = Array.from(
-            new Set(data.modules.map((module: ApiModule) => module.subject))
-          ) as string[];
-          
-          setSubjects(uniqueSubjects);
-          
-          // Definir o subject ativo como o primeiro da lista se houver algum
-          if (uniqueSubjects.length > 0 && !activeSubject) {
-            setActiveSubject(uniqueSubjects[0]);
+          // Definir o curso ativo como o primeiro da lista se houver algum
+          if (data.length > 0 && !activeCourse) {
+            setActiveCourse(data[0]);
           }
-        }
-        
-        if (data.subscriptions) {
-          setApiSubscriptions(data.subscriptions)
+          
+          // Extrair todos os módulos e assinaturas
+          const allModules: ApiModule[] = [];
+          const allSubscriptions: ApiSubscription[] = [];
+          
+          data.forEach((course: ApiCourse) => {
+            course.modules.forEach((module: ApiModule) => {
+              allModules.push({
+                ...module,
+                course: course.name
+              });
+            });
+            course.subscribes.forEach((sub: ApiSubscription) => {
+              allSubscriptions.push({
+                ...sub,
+                course: course.name
+              });
+            });
+          });
+          
+          setApiModules(allModules);
+          setApiSubscriptions(allSubscriptions);
+          
+          // Extrair subjects únicos dos módulos do curso ativo
+          if (activeCourse) {
+            const uniqueSubjects = Array.from(
+              new Set(activeCourse.modules.map(module => module.subject))
+            ) as string[];
+            
+            setSubjects(uniqueSubjects);
+            
+            // Definir o subject ativo como o primeiro da lista se houver algum
+            if (uniqueSubjects.length > 0 && !activeSubject) {
+              setActiveSubject(uniqueSubjects[0]);
+            }
+          }
         }
       } catch (error) {
         console.error("Erro ao carregar planos:", error)
@@ -92,6 +142,22 @@ export default function Home() {
     
     fetchPlans()
   }, [])
+
+  // Atualizar subjects quando o curso ativo mudar
+  useEffect(() => {
+    if (activeCourse) {
+      const uniqueSubjects = Array.from(
+        new Set(activeCourse.modules.map(module => module.subject))
+      ) as string[];
+      
+      setSubjects(uniqueSubjects);
+      
+      // Definir o subject ativo como o primeiro da lista se houver algum
+      if (uniqueSubjects.length > 0 && !activeSubject) {
+        setActiveSubject(uniqueSubjects[0]);
+      }
+    }
+  }, [activeCourse])
 
   // Carrossel para planos de assinatura
   const [subscriptionRef, subscriptionApi] = useEmblaCarousel({
@@ -252,7 +318,9 @@ export default function Home() {
   };
 
   // Mapear os dados da API para o formato usado na interface
-  const subscriptions = apiSubscriptions.map(sub => {
+  const subscriptions = apiSubscriptions
+    .filter(sub => sub.course === activeCourse?.name) // Filtrar pelo curso ativo
+    .map(sub => {
     const isLifetime = sub.name.toLowerCase().includes("vital");
     return {
       id: sub.id,
@@ -262,12 +330,26 @@ export default function Home() {
         <Infinity className="h-8 w-8 text-indigo-500 mx-auto mb-2" /> : 
         <Clock className="h-8 w-8 text-indigo-500 mx-auto mb-2" />,
       features: isLifetime ? subscriptionFeatures.lifetime : subscriptionFeatures.monthly,
-      popular: isLifetime // Planos vitalícios são destacados como populares
+      popular: isLifetime, // Planos vitalícios são destacados como populares
+      course: sub.course
     };
   });
 
-  // Filtrar módulos apenas para o subject ativo
-  const filteredModules = apiModules.filter(mod => mod.subject === activeSubject);
+  // Primeiro filtrar os módulos pelo curso ativo, depois pelo subject ativo
+  const filteredModulesByCourse = apiModules.filter(mod => mod.course === activeCourse?.name);
+  const filteredModules = filteredModulesByCourse.filter(mod => mod.subject === activeSubject);
+
+  // Extrair subjects disponíveis para o curso ativo
+  const subjectsForActiveCourse = Array.from(
+    new Set(filteredModulesByCourse.map(module => module.subject))
+  ) as string[];
+
+  // Garantir que o subject ativo está na lista de subjects para o curso ativo
+  useEffect(() => {
+    if (subjectsForActiveCourse.length > 0 && !subjectsForActiveCourse.includes(activeSubject)) {
+      setActiveSubject(subjectsForActiveCourse[0]);
+    }
+  }, [activeCourse, subjectsForActiveCourse]);
 
   // Mapear os módulos filtrados
   const modules = filteredModules.map(mod => {
@@ -331,7 +413,7 @@ export default function Home() {
       <div
         className="absolute inset-0 opacity-5"
         style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Cg fillRule='evenodd'%3E%3Cg fill='%23ffffff' fillOpacity='0.4'%3E%3Cpath opacity='.5' d='M96 95h4v1h-4v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9zm-1 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm9-10v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+          backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Cg fillRule='evenodd'%3E%3Cg fill='%23ffffff' fillOpacity='0.4'%3E%3Cpath opacity='.5' d='M96 95h4v1h-4v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9zm-1 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm9-10v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")"
         }}
       />
 
@@ -405,6 +487,43 @@ export default function Home() {
             <Card className="bg-white/95 backdrop-blur-sm shadow-xl rounded-2xl overflow-hidden border-none">
               <CardContent className="p-6 md:p-8">
                 <div className="flex flex-col space-y-8">
+                  {/* Seleção de Curso - exibida em todas as abas */}
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.2 }}
+                    className="w-full mb-6"
+                  >
+                    <div className="py-2">
+                      <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center">
+                        <GraduationCap className="mr-2 h-6 w-6 text-indigo-600" />
+                        Escolha o Curso
+                      </h2>
+
+                      <div className="flex flex-wrap gap-2">
+                        {courses.map((course) => (
+                          <motion.div
+                            key={course.id}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                          >
+                            <Button
+                              variant={activeCourse?.id === course.id ? "default" : "outline"}
+                              onClick={() => setActiveCourse(course)}
+                              className={`transition-all ${
+                                activeCourse?.id === course.id
+                                  ? "bg-indigo-600 hover:bg-indigo-700"
+                                  : "hover:border-indigo-400 hover:text-indigo-600"
+                              }`}
+                            >
+                              {course.name}
+                            </Button>
+                          </motion.div>
+                        ))}
+                      </div>
+                    </div>
+                  </motion.div>
+
                   {/* Tabs personalizadas para Planos e Módulos */}
                   <div className="w-full">
                     {/* Cabeçalho das abas personalizado */}
@@ -435,46 +554,11 @@ export default function Home() {
                       </button>
                     </div>
 
-                    {/* Subject Selection - mostrar apenas na aba de módulos */}
-                    <motion.div
-                      initial={{ opacity: 0, height: 0, overflow: "hidden" }}
-                      animate={{
-                        opacity: activeTab === "modules" ? 1 : 0,
-                        height: activeTab === "modules" ? "auto" : 0,
-                      }}
-                      transition={{ duration: 0.3, ease: "easeInOut" }}
-                      className="w-full mb-6"
-                    >
-                      <div className="py-2">
-                        <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center">
-                          <BookOpen className="mr-2 h-6 w-6 text-indigo-600" />
-                          Escolha a Matéria
-                        </h2>
-
-                        <div className="flex flex-wrap gap-2">
-                          {subjects.map((subject) => (
-                            <Button
-                              key={subject}
-                              variant={activeSubject === subject ? "default" : "outline"}
-                              onClick={() => setActiveSubject(subject)}
-                              className={`transition-all ${
-                                activeSubject === subject
-                                  ? "bg-indigo-600 hover:bg-indigo-700"
-                                  : "hover:border-indigo-400 hover:text-indigo-600"
-                              }`}
-                            >
-                              {subject}
-                            </Button>
-                          ))}
-                        </div>
-                      </div>
-                    </motion.div>
-
                     {/* Conteúdo da aba de Assinaturas */}
                     {activeTab === "subscriptions" && (
                       <div>
                         <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-                          Planos de Assinatura 
+                          Planos de Assinatura para {activeCourse?.name}
                         </h2>
 
                         {subscriptions.length === 0 ? (
@@ -606,6 +690,43 @@ export default function Home() {
                     {/* Conteúdo da aba de Módulos */}
                     {activeTab === "modules" && (
                       <div>
+                        {/* Subject Selection - apenas na aba de módulos */}
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ duration: 0.2 }}
+                          className="w-full mb-6"
+                        >
+                          <div className="py-2">
+                            <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center">
+                              <BookOpen className="mr-2 h-6 w-6 text-indigo-600" />
+                              Escolha a Matéria
+                            </h2>
+
+                            <div className="flex flex-wrap gap-2">
+                              {subjects.map((subject) => (
+                                <motion.div
+                                  key={`subject-${subject}`}
+                                  whileHover={{ scale: 1.05 }}
+                                  whileTap={{ scale: 0.95 }}
+                                >
+                                  <Button
+                                    variant={activeSubject === subject ? "default" : "outline"}
+                                    onClick={() => setActiveSubject(subject)}
+                                    className={`transition-all ${
+                                      activeSubject === subject
+                                        ? "bg-indigo-600 hover:bg-indigo-700"
+                                        : "hover:border-indigo-400 hover:text-indigo-600"
+                                    }`}
+                                  >
+                                    {subject}
+                                  </Button>
+                                </motion.div>
+                              ))}
+                            </div>
+                          </div>
+                        </motion.div>
+
                         <h2 className="text-2xl font-semibold text-gray-800 mb-4">
                           Módulos Individuais para {activeSubject}
                         </h2>

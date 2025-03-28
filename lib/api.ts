@@ -38,6 +38,14 @@ export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
         errorData = { message: errorText || "Erro desconhecido" };
       }
       console.error(`[API] Erro na requisição ${endpoint}:`, errorData);
+
+      // Se o erro for 401 (não autorizado), redirecionar para a página inicial
+      if (response.status === 401) {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('user_data');
+        window.location.href = '/';
+      }
+
       throw new Error(errorData.error || errorData.message || `Erro ao comunicar com o servidor: ${response.status}`);
     }
 
