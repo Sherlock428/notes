@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { CheckCircle, CreditCard, Lock, AlertCircle, QrCode } from "lucide-react"
+import { CheckCircle, CreditCard, Lock, AlertCircle, QrCode, Eye, EyeOff } from "lucide-react"
 import { api, loadMercadoPagoSDK } from "../lib/api"
 
 // API Base URL - usar o mesmo definido em lib/api.ts
@@ -377,6 +377,7 @@ export function CheckoutModal({ isOpen, onClose, item }: CheckoutModalProps) {
   const [paymentMethod, setPaymentMethod] = useState<"card" | "pix">("card")
   const [debugMode, setDebugMode] = useState(false);
   const [tempUser, setTempUser] = useState<any>(null)
+  const [showPassword, setShowPassword] = useState(false)
 
   // Gerar ID único para o formulário
   const formId = useRef(`form-checkout-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`);
@@ -646,14 +647,29 @@ export function CheckoutModal({ isOpen, onClose, item }: CheckoutModalProps) {
 
               <div className="space-y-2">
                 <Label htmlFor="password">Senha</Label>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  placeholder="Crie uma senha segura"
-                  value={formData.password}
-                  onChange={handleChange}
-                />
+                <div className="relative">
+                  <Input
+                    id="password"
+                    name="password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Crie uma senha segura"
+                    value={formData.password}
+                    onChange={handleChange}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4 text-gray-500" />
+                    ) : (
+                      <Eye className="h-4 w-4 text-gray-500" />
+                    )}
+                  </Button>
+                </div>
                 {errors.password && (
                   <p className="text-red-500 text-sm flex items-center mt-1">
                     <AlertCircle className="h-3 w-3 mr-1" />

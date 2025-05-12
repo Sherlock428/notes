@@ -68,7 +68,7 @@ export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
 export const api = {
   // Autenticação
   auth: {
-    login: async ({ email, password, redirectAfterLogin = false }: { 
+    login: async ({ email, password, redirectAfterLogin = true }: { 
       email: string; 
       password: string; 
       redirectAfterLogin?: boolean 
@@ -118,6 +118,18 @@ export const api = {
     },
     profile: async () => {
       return fetchAPI("/profile")
+    },
+    editUser: async (data: { 
+      name: string, 
+      email: string, 
+      password: string, 
+      new_password?: string, 
+      confirm_password?: string 
+    }) => {
+      return fetchAPI("/edit_user", {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      });
     },
   },
 

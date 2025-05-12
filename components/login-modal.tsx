@@ -23,6 +23,7 @@ export function LoginModal({ isOpen, onClose, onSuccess, redirectToHome = true }
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [loginError, setLoginError] = useState("")
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
@@ -35,6 +36,11 @@ export function LoginModal({ isOpen, onClose, onSuccess, redirectToHome = true }
         delete newErrors[name]
         return newErrors
       })
+    }
+    
+    // Limpar erro de login quando o usuário modifica o formulário
+    if (loginError) {
+      setLoginError("")
     }
   }
 
@@ -52,8 +58,11 @@ export function LoginModal({ isOpen, onClose, onSuccess, redirectToHome = true }
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.email || !formData.password) {
-      alert("Por favor, preencha todos os campos");
+    // Limpar qualquer erro de login anterior
+    setLoginError("");
+    
+    // Validar formulário
+    if (!validateForm()) {
       return;
     }
     
@@ -62,11 +71,13 @@ export function LoginModal({ isOpen, onClose, onSuccess, redirectToHome = true }
       console.log("Tentando login com:", formData.email);
       
       // Passar o parâmetro redirectAfterLogin baseado na prop redirectToHome
-      await api.auth.login({ 
+      const loginResult = await api.auth.login({ 
         email: formData.email, 
         password: formData.password,
         redirectAfterLogin: redirectToHome
       });
+      
+      // Se chegou aqui, o login foi bem-sucedido
       
       // Chamar onSuccess se existir - isso permite abrir o modal de checkout após o login
       if (onSuccess) {
@@ -75,9 +86,11 @@ export function LoginModal({ isOpen, onClose, onSuccess, redirectToHome = true }
       
       // Fechamos o modal independentemente do resultado
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Erro no login:", error);
-      alert("Erro ao fazer login. Verifique suas credenciais.");
+      
+      // Exibir mensagem de erro na interface em vez de um alert
+      setLoginError(error?.message || "Email ou senha incorretos. Verifique suas credenciais.");
     } finally {
       setIsSubmitting(false);
     }
@@ -94,6 +107,13 @@ export function LoginModal({ isOpen, onClose, onSuccess, redirectToHome = true }
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+          {loginError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md flex items-start">
+              <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0 mt-0.5" />
+              <p className="text-sm">{loginError}</p>
+            </div>
+          )}
+          
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input
@@ -103,6 +123,7 @@ export function LoginModal({ isOpen, onClose, onSuccess, redirectToHome = true }
               placeholder="seu@email.com"
               value={formData.email}
               onChange={handleChange}
+              className={errors.email ? "border-red-500" : ""}
             />
             {errors.email && (
               <p className="text-red-500 text-sm flex items-center mt-1">
@@ -127,6 +148,7 @@ export function LoginModal({ isOpen, onClose, onSuccess, redirectToHome = true }
                 placeholder="Sua senha"
                 value={formData.password}
                 onChange={handleChange}
+                className={errors.password ? "border-red-500" : ""}
               />
               <Button
                 type="button"
